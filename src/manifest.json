@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "Genius AI Quiz Solver",
+  "version": "1.0",
+  "description": "Un assistant IA qui répond à vos questions discrètement depuis n'importe quelle page web.",
+  "icons": {
+    "16": "images/icon128.png",
+    "48": "images/icon128.png",
+    "128": "images/icon128.png",
+    "256": "images/icon128.png"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "permissions": [
+    "bookmarks",
+    "storage"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_start"
+    }
+  ]
+}

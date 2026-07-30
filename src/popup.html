@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Configuration ExtensionAI</title>
+  <link rel="stylesheet" href="popup.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="logo">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="#00F0FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M2 17L12 22L22 17" stroke="#00F0FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M2 12L12 17L22 12" stroke="#00F0FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <h1>Extension AI</h1>
+    </div>
+    
+    <div class="card">
+      <p class="description">Configurez votre clé d'API Gemini pour activer l'intelligence artificielle.</p>
+      
+      <div class="input-group">
+        <label for="apiKey">Clé d'API Gemini</label>
+        <div class="input-wrapper">
+          <input type="password" id="apiKey" placeholder="Collez votre clé API ici..." autocomplete="off">
+          <button id="toggleVisibility" class="icon-btn" aria-label="Afficher/Masquer">
+            <svg id="eyeIcon" width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M1 12C1 12 5 4 12 4C19 4 23 12 23 12C23 12 19 20 12 20C5 20 1 12 1 12Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <button id="saveBtn" class="primary-btn">
+        <span class="btn-text">Sauvegarder</span>
+        <svg class="check-icon hidden" width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M20 6L9 17L4 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
+
+      <div id="statusMessage" class="status-message"></div>
+    </div>
+    
+    <div class="footer">
+      <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer">Obtenir une clé d'API</a>
+    </div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
