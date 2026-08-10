@@ -2,8 +2,8 @@ name: Zip src and Release
 
 on:
   push:
-    branches:
-      - main
+    tags:
+      - 'v*' # Le script se déclenche uniquement si tu pousses un tag commençant par 'v'
 
 jobs:
   build-and-release:
