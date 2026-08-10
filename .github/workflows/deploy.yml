@@ -1,0 +1,26 @@
+name: Zip src and Release
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Permission obligatoire pour que le bot puisse publier une release
+
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
+      - name: Zipper le répertoire src
+        # Cette commande crée l'archive src-archive.zip contenant le dossier src
+        run: zip -r src-archive.zip src/
+
+      - name: Créer la release GitHub
+        uses: softprops/action-gh-release@v2
+        with:
+          files: src-archive.zip
+          generate_release_notes: true # Génère automatiquement un changelog basé sur tes pull requests/commits
