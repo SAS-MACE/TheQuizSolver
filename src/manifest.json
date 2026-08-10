@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Genius AI Quiz Solver",
   "version": "1.0",
-  "description": "Un assistant IA qui répond à vos questions discrètement depuis n'importe quelle page web.",
+  "description": "Appuyez sur 'ù' pour capturer l'écran. L'IA analyse cette image et trouve la réponse à la question posée.",
   "icons": {
     "16": "images/icon128.png",
     "48": "images/icon128.png",
