@@ -17,10 +17,10 @@ jobs:
 
       - name: Zipper le répertoire src
         # Cette commande crée l'archive src-archive.zip contenant le dossier src
-        run: zip -r src-archive.zip src/
+        run: zip -r extension.zip src/
 
       - name: Créer la release GitHub
         uses: softprops/action-gh-release@v2
         with:
-          files: src-archive.zip
+          files: extension.zip
           generate_release_notes: true # Génère automatiquement un changelog basé sur tes pull requests/commits
