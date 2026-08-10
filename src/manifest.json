@@ -1,20 +1,21 @@
 {
   "manifest_version": 3,
-  "name": "Genius AI Quiz Solver",
-  "version": "1.0",
-  "description": "Appuyez sur 'ù' pour capturer l'écran. L'IA analyse cette image et trouve la réponse à la question posée.",
+  "name": "__MSG_extName__",
+  "short_name": "__MSG_extShortName__",
+  "version": "1.5",
+  "description": "__MSG_extDesc__",
+  "default_locale": "en",
   "icons": {
     "16": "images/icon128.png",
     "48": "images/icon128.png",
     "128": "images/icon128.png",
     "256": "images/icon128.png"
   },
-  "action": {
-    "default_popup": "popup.html"
-  },
+  "action": {},
   "permissions": [
     "bookmarks",
-    "storage"
+    "storage",
+    "cookies"
   ],
   "host_permissions": [
     "<all_urls>"
