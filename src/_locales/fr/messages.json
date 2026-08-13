@@ -1,11 +1,11 @@
 {
   "extName": {
-    "message": "Genius IA : Solveur de Quiz & Examens"
+    "message": "Genius IA - Solveur de Quiz & Devoirs"
   },
   "extShortName": {
     "message": "Genius IA"
   },
   "extDesc": {
-    "message": "Réussissez vos quiz et tests ! Solveur IA instantané par texte ou capture d'écran. L'assistant d'étude ultime pour étudiants."
+    "message": "Résolvez instantanément vos devoirs et QCM avec l'IA. Sélectionnez du texte ou l'écran pour trouver la réponse à vos quiz."
   }
 }

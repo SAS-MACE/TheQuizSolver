@@ -12,7 +12,6 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
   if (namespace === 'local' && changes.user && changes.user.newValue) {
     if (changes.user.newValue.magicKey) {
       magicKey = changes.user.newValue.magicKey;
-      console.log("Magic key updated to:", magicKey);
     }
   }
 });
@@ -26,13 +25,13 @@ window.addEventListener('keydown', (event) => {
     event.preventDefault();
     event.stopImmediatePropagation();
     
-    displayDiscreetly("⏳ Recherche...");
+    displayDiscreetly("⏳");
 
     chrome.runtime.sendMessage({
       action: "getAnswer",
       question: window.getSelection().toString()
     }, (response) => {
-      displayDiscreetly(response?.answer || "❌ Erreur");
+      displayDiscreetly(response?.answer || "❌");
     });
   }
 }, { capture: true });

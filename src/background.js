@@ -1,5 +1,5 @@
-const BASE_URL = 'https://genius.reboux.pro'; // Remplacez par votre URL de production
-// const BASE_URL = 'http://localhost:9888'; // Remplacez par votre URL de production
+// const BASE_URL = 'https://genius.reboux.pro'; // Remplacez par votre URL de production
+const BASE_URL = 'http://localhost:9888'; // Remplacez par votre URL de production
 
 
 
@@ -47,6 +47,12 @@ chrome.runtime.onStartup.addListener(syncUser);
 chrome.cookies.onChanged.addListener((changeInfo) => {
   const baseHost = new URL(BASE_URL).hostname;
   if (changeInfo.cookie.name === 'auth_token' && changeInfo.cookie.domain.includes(baseHost)) {
+    syncUser();
+  }
+});
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status === 'complete' && tab.url && tab.url.startsWith(BASE_URL)) {
     syncUser();
   }
 });
