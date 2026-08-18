@@ -1,11 +1,19 @@
-// const BASE_URL = 'https://genius.reboux.pro'; // Remplacez par votre URL de production
-const BASE_URL = 'http://localhost:9888'; // Remplacez par votre URL de production
+const BASE_URL = 'https://www.thequizsolver.com'; // Remplacez par votre URL de production
+// const BASE_URL = 'http://localhost:9888'; // Remplacez par votre URL de production
 
 
 
 // Redirection au clic sur l'icône de l'extension
 chrome.action.onClicked.addListener(() => {
   chrome.tabs.create({ url: `${BASE_URL}/dashboard` });
+});
+
+chrome.runtime.onInstalled.addListener((details) => {
+  if (details.reason === chrome.runtime.OnInstalledReason.INSTALL) {
+    chrome.tabs.create({
+      url: BASE_URL + '/dashboard'
+    });
+  }
 });
 
 // Synchronisation de l'utilisateur via le cookie du site

@@ -1,4 +1,4 @@
-let magicKey = 'ù'; // Default
+let magicKey = ';'; // Default
 
 // Initial load
 chrome.storage.local.get(['user'], (data) => {
@@ -21,7 +21,8 @@ function displayDiscreetly(answer) {
 }
 
 window.addEventListener('keydown', (event) => {
-  if (event.key === magicKey) {
+  let highlightedText = window.getSelection().toString()
+  if (event.key === magicKey && highlightedText.length > 0) {
     event.preventDefault();
     event.stopImmediatePropagation();
     
@@ -29,7 +30,7 @@ window.addEventListener('keydown', (event) => {
 
     chrome.runtime.sendMessage({
       action: "getAnswer",
-      question: window.getSelection().toString()
+      question: highlightedText
     }, (response) => {
       displayDiscreetly(response?.answer || "❌");
     });
