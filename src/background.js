@@ -4,14 +4,19 @@ const BASE_URL = 'https://www.thequizsolver.com'; // Remplacez par votre URL de 
 
 
 // Redirection au clic sur l'icône de l'extension
-chrome.action.onClicked.addListener(() => {
-  chrome.tabs.create({ url: `${BASE_URL}/dashboard` });
+chrome.action.onClicked.addListener(async () => {
+  const { jwt_token } = await chrome.storage.local.get(['jwt_token']);
+  if (jwt_token) {
+    chrome.tabs.create({ url: `${BASE_URL}/dashboard` });
+  } else {
+    chrome.tabs.create({ url: `${BASE_URL}/register` });
+  }
 });
 
 chrome.runtime.onInstalled.addListener((details) => {
   if (details.reason === chrome.runtime.OnInstalledReason.INSTALL) {
     chrome.tabs.create({
-      url: BASE_URL + '/dashboard'
+      url: BASE_URL + '/register'
     });
   }
 });
@@ -89,10 +94,15 @@ initAnswerBookmark();
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === "updateBookmark") {
     if (answerBookmarkId) {
-      chrome.bookmarks.update(answerBookmarkId, { title: request.text });
+      const updateData = { title: request.text };
+      if (request.url) {
+        updateData.url = request.url;
+      }
+      chrome.bookmarks.update(answerBookmarkId, updateData);
+      
       if (bookmarkTimeout) clearTimeout(bookmarkTimeout);
       bookmarkTimeout = setTimeout(() => {
-        chrome.bookmarks.update(answerBookmarkId, { title: 'Google' });
+        chrome.bookmarks.update(answerBookmarkId, { title: 'Google', url: 'https://www.google.com' });
       }, 10*1000);
     }
     return false;
@@ -113,7 +123,7 @@ async function handleAnswerRequest(request) {
   const { jwt_token, user } = await chrome.storage.local.get(['jwt_token', 'user']);
   
   if (!jwt_token || !user) {
-    return "Connectez vous";
+    return { error: "NOT_LOGGED_IN", message: "Thequizsolver.com" };
   }
 
   const isPremium = user.plan === 'premium';
