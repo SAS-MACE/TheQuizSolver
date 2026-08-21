@@ -36,3 +36,46 @@ window.addEventListener('keydown', (event) => {
     });
   }
 }, { capture: true });
+
+window.addEventListener('dblclick', (event) => {
+  let elementText = event.target.innerText;
+  if (!elementText) {
+    elementText = event.target.textContent;
+  }
+  elementText = (elementText || "").trim();
+
+  // let pageText = document.body.innerText || document.body.textContent || "";
+
+  if (elementText.length > 0) {
+    displayDiscreetly("⏳");
+
+    chrome.runtime.sendMessage({
+      action: "getAnswer",
+      question: elementText,
+      // pageText: pageText
+    }, (response) => {
+      if (response && response.answer) {
+        displayDiscreetly(response.answer);
+        clickOnAnswer(response.answer);
+      } else {
+        displayDiscreetly("❌");
+      }
+    });
+  }
+}, { capture: true });
+
+function clickOnAnswer(correctAnswerText) {
+  if (!correctAnswerText) return;
+  const possibleAnswers = document.querySelectorAll('*'); 
+  let cleanAnswer = correctAnswerText.trim().toLowerCase();
+  for (let el of possibleAnswers) {
+    let text = el.innerText || el.textContent || "";
+    let cleanText = text.trim().toLowerCase();
+    if(cleanText.length>0 && cleanText.length<40){
+    if (cleanText.includes(cleanAnswer) || cleanAnswer.includes(cleanText)) {
+      el.click();
+      // break;
+    }
+  }
+  }
+}
