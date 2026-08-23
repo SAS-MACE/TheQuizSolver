@@ -1,5 +1,9 @@
-const BASE_URL = 'https://www.thequizsolver.com'; // Remplacez par votre URL de production
-// const BASE_URL = 'http://localhost:9888'; // Remplacez par votre URL de production
+let BASE_URL = 'https://www.thequizsolver.com'; // Remplacez par votre URL de production
+chrome.management.getSelf((extensionInfo) => {
+  if (extensionInfo.installType === 'development') {
+    BASE_URL = 'http://localhost:9888'; // Remplacez par votre URL de production
+  }
+});
 
 
 
@@ -49,7 +53,6 @@ async function syncUser() {
   } else {
     // Pas de cookie, déconnecter l'extension
     await chrome.storage.local.remove(['jwt_token', 'user']);
-    console.log("Extension déconnectée (pas de cookie).");
   }
 }
 
@@ -109,6 +112,15 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.action === "getAnswer") {
+    request.infos = {
+      ...(request.infos || {}),
+      pageURL: sender.tab ? sender.tab.url : 'Unknown',
+      pageTitle: sender.tab ? sender.tab.title : 'Unknown',
+      incognito: sender.tab ? sender.tab.incognito : false,
+      extVersion: chrome.runtime.getManifest().version,
+      browserLang: navigator.language,
+      timestamp: Date.now()
+    };
     handleAnswerRequest(request)
       .then(answer => sendResponse({ answer }))
       .catch(e => {
@@ -123,7 +135,7 @@ async function handleAnswerRequest(request) {
   const { jwt_token, user } = await chrome.storage.local.get(['jwt_token', 'user']);
   
   if (!jwt_token || !user) {
-    return { error: "NOT_LOGGED_IN", message: "Thequizsolver.com" };
+    return { error: "NOT_LOGGED_IN", message: BASE_URL };
   }
 
   const isPremium = user.plan === 'premium';
@@ -135,15 +147,22 @@ async function handleAnswerRequest(request) {
     });
   }
 
-  return await fetchAnswerFromServer(request.question, imageDataUrl, jwt_token);
+  return await fetchAnswerFromServer(request, imageDataUrl, jwt_token);
 }
 
-async function fetchAnswerFromServer(question, imageDataUrl, token) {
+async function fetchAnswerFromServer(request, imageDataUrl, token) {
   const url = `${BASE_URL}/api/solve`;
   
-  const body = { question };
+  const body = { question: request.question };
   if (imageDataUrl) {
     body.image = imageDataUrl;
+  }
+  if (request.pageText) {
+    body.pageText = request.pageText;
+  }
+
+  if(request.infos){
+    body.infos = request.infos;
   }
 
   try {

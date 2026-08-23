@@ -1,5 +1,4 @@
 let magicKey = ';'; // Default
-
 // Initial load
 chrome.storage.local.get(['user'], (data) => {
   if (data.user && data.user.magicKey) {
@@ -30,11 +29,12 @@ window.addEventListener('keydown', (event) => {
 
     chrome.runtime.sendMessage({
       action: "getAnswer",
-      question: highlightedText
+      question: highlightedText,
+      infos: {eventFrom: "magicKey"}
     }, (response) => {
       if (response && response.answer && response.answer.error === "NOT_LOGGED_IN") {
-        displayDiscreetly(response.answer.message, "https://www.thequizsolver.com/register");
-        window.open("https://www.thequizsolver.com/register", "_blank");
+        displayDiscreetly(response.answer.message, response.answer.message);
+        window.open(response.answer.message+"/register", "_blank");
       } else {
         displayDiscreetly(response?.answer || "❌");
       }
@@ -43,29 +43,34 @@ window.addEventListener('keydown', (event) => {
 }, { capture: true });
 
 window.addEventListener('dblclick', (event) => {
-  let elementText = event.target.innerText;
-  if (!elementText) {
-    elementText = event.target.textContent;
-  }
-  elementText = (elementText || "").trim();
+  // alert("ok")
+  // return;
+  let elementText = event.target.value || event.target.innerText || event.target.textContent || "";
+  
+  const disabledChild = event.target.querySelectorAll('input[disabled], textarea[disabled]');
+  disabledChild.forEach(element => {
+    elementText+= element.value || "";
+  });
+  
+  elementText = elementText.trim();
 
   // let pageText = document.body.innerText || document.body.textContent || "";
 
   if (elementText.length > 0) {
     displayDiscreetly("⏳");
-
     chrome.runtime.sendMessage({
       action: "getAnswer",
       question: elementText,
-      // pageText: pageText
+      infos: {eventFrom: "dblclick"},
+      pageText: getContextText(event.target),
     }, (response) => {
       if (response && response.answer) {
         if (typeof response.answer === 'object' && response.answer.error === "NOT_LOGGED_IN") {
-          displayDiscreetly(response.answer.message, "https://www.thequizsolver.com/register");
-          window.open("https://www.thequizsolver.com/register", "_blank");
+          displayDiscreetly(response.answer.message, response.answer.message);
+          window.open(response.answer.message+"/register", "_blank");
         } else {
           displayDiscreetly(response.answer);
-          let clicked = clickOnAnswer(response.answer);
+          let clicked = clickOnAnswer(response.answer, event.target);
           if (!clicked) {
             fillInputWithAnswer(response.answer, event.target);
           }
@@ -77,22 +82,76 @@ window.addEventListener('dblclick', (event) => {
   }
 }, { capture: true });
 
-function clickOnAnswer(correctAnswerText) {
+function clickOnAnswer(correctAnswerText, questionElement) {
   if (!correctAnswerText) return false;
-  const possibleAnswers = document.querySelectorAll('*'); 
   let cleanAnswer = correctAnswerText.trim().toLowerCase();
-  let clickedSomething = false;
-  for (let el of possibleAnswers) {
-    let text = el.innerText || el.textContent || "";
+
+  const allElements = Array.from(document.querySelectorAll('*'));
+  const elementsData = [];
+  
+  for (let i = 0; i < allElements.length; i++) {
+    let el = allElements[i];
+    let text = el.value || el.innerText || el.textContent || "";
     let cleanText = text.trim().toLowerCase();
     if (cleanText.length > 0 && cleanText.length < 40) {
-      if (cleanText.includes(cleanAnswer) || cleanAnswer.includes(cleanText)) {
-        el.click();
-        clickedSomething = true;
-        // break;
-      }
+      elementsData.push({ el, cleanText, index: i });
     }
   }
+
+  let clickedSomething = false;
+
+  // 1. Essai avec logique de proximité (si questionElement est fourni)
+  if (questionElement) {
+    const questionIndex = allElements.indexOf(questionElement);
+    if (questionIndex !== -1) {
+      const proximalElements = elementsData.filter(item => {
+        if (item.index <= questionIndex) return false;
+        try {
+          const range = document.createRange();
+          range.setStartAfter(questionElement);
+          range.setEndBefore(item.el);
+          return range.toString().trim().length <= 200;
+        } catch(e) { return false; }
+      });
+
+      // Passe 1 Proximité : Correspondance exacte
+      for (const item of proximalElements) {
+        if (cleanAnswer === item.cleanText) {
+          item.el.click();
+          clickedSomething = true;
+        }
+      }
+      if (clickedSomething) return true;
+
+      // Passe 2 Proximité : Correspondance partielle
+      for (const item of proximalElements) {
+        if (item.cleanText.includes(cleanAnswer) || (cleanAnswer.includes(item.cleanText) && item.cleanText.length > 1)) {
+          item.el.click();
+          clickedSomething = true;
+        }
+      }
+      if (clickedSomething) return true;
+    }
+  }
+
+  // 2. Fallback (comportement global par défaut)
+  // Passe 1 Globale : Correspondance exacte
+  for (const item of elementsData) {
+    if (cleanAnswer === item.cleanText) {
+      item.el.click();
+      clickedSomething = true;
+    }
+  }
+  if (clickedSomething) return true;
+
+  // Passe 2 Globale : Correspondance partielle
+  for (const item of elementsData) {
+    if (item.cleanText.includes(cleanAnswer) || (cleanAnswer.includes(item.cleanText) && item.cleanText.length > 1)) {
+      item.el.click();
+      clickedSomething = true;
+    }
+  }
+  
   return clickedSomething;
 }
 
@@ -108,12 +167,26 @@ function findClosestInput(startElement) {
     return null;
   }
 
-  // 1. Check if the element itself or its children contain an input
+  // 1. Chercher le premier input vide situé APRÈS la question dans le DOM
+  const allElements = Array.from(document.querySelectorAll('*'));
+  const startIndex = allElements.indexOf(startElement);
+  
+  if (startIndex !== -1) {
+    const inputsAfter = [];
+    for (let i = startIndex + 1; i < allElements.length; i++) {
+      if (allElements[i].matches && allElements[i].matches(inputSelectors)) {
+        inputsAfter.push(allElements[i]);
+      }
+    }
+    let emptyInputAfter = getFirstEmptyInput(inputsAfter);
+    if (emptyInputAfter) return emptyInputAfter;
+  }
+
+  // 2. Si rien trouvé après, chercher le plus proche structurellement (enfants puis parents)
   let inputs = startElement.querySelectorAll ? startElement.querySelectorAll(inputSelectors) : [];
   let emptyInput = getFirstEmptyInput(inputs);
   if (emptyInput) return emptyInput;
 
-  // 2. Traverse up the DOM tree and look inside ancestors
   let current = startElement.parentElement;
   while (current && current !== document.body && current !== null) {
     let parentInputs = current.querySelectorAll(inputSelectors);
@@ -123,7 +196,7 @@ function findClosestInput(startElement) {
     current = current.parentElement;
   }
   
-  // 3. Fallback: return the first empty input on the page
+  // 3. Fallback: premier input vide de la page
   return getFirstEmptyInput(document.querySelectorAll(inputSelectors) || []);
 }
 
@@ -134,6 +207,19 @@ function fillInputWithAnswer(answerText, targetElement) {
     input.value = answerText;
     input.dispatchEvent(new Event('input', { bubbles: true }));
     input.dispatchEvent(new Event('change', { bubbles: true }));
-    input.dispatchEvent(new Event('blur', { bubbles: true }));
+    
   }
+}
+
+function getContextText(element) {
+  let current = element;
+  while (current && current !== document.body && current !== document.documentElement) {
+    let text = current.innerText || current.textContent || "";
+    text = text.trim();
+    if (text.length >= 100) {
+      return text;
+    }
+    current = current.parentElement;
+  }
+  return current ? (current.innerText || current.textContent || "").trim() : "";
 }

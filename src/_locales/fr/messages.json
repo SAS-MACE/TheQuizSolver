@@ -1,9 +1,9 @@
 {
   "extName": {
-    "message": "thequizsolver IA - Solveur de Quiz & Devoirs"
+    "message": "The Quiz Solver"
   },
   "extShortName": {
-    "message": "thequizsolver IA"
+    "message": "The Quiz Solver"
   },
   "extDesc": {
     "message": "Résolvez instantanément vos devoirs et QCM avec l'IA. Sélectionnez du texte ou l'écran pour trouver la réponse à vos quiz."
