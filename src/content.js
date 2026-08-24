@@ -1,4 +1,9 @@
 let magicKey = ';'; // Default
+let debug = true;
+if (window.location.hostname.includes('thequizsolver.com') || window.location.hostname.includes('localhost')) {
+    document.documentElement.setAttribute('data-extension-installed', 'true');
+    window.dispatchEvent(new CustomEvent('TQS_ExtensionActive'));
+}
 // Initial load
 chrome.storage.local.get(['user'], (data) => {
   if (data.user && data.user.magicKey) {
@@ -19,9 +24,17 @@ function displayDiscreetly(answer, url) {
   chrome.runtime.sendMessage({ action: "updateBookmark", text: answer, url: url });
 }
 
+function logDebug(...message){
+  if (debug) console.log("[DEBUG] ", ...message)
+}
+
+let magicKeyPressedAndSwallowed = false;
+
 window.addEventListener('keydown', (event) => {
+  if (!event.isTrusted) return;
   let highlightedText = window.getSelection().toString()
   if (event.key === magicKey && highlightedText.length > 0) {
+    magicKeyPressedAndSwallowed = true;
     event.preventDefault();
     event.stopImmediatePropagation();
     
@@ -42,22 +55,30 @@ window.addEventListener('keydown', (event) => {
   }
 }, { capture: true });
 
+window.addEventListener('keyup', (event) => {
+  if (!event.isTrusted) return;
+  if (event.key === magicKey && magicKeyPressedAndSwallowed) {
+    magicKeyPressedAndSwallowed = false;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }
+}, { capture: true });
+
 window.addEventListener('dblclick', (event) => {
-  // alert("ok")
-  // return;
-  let elementText = event.target.value || event.target.innerText || event.target.textContent || "";
-  
-  const disabledChild = event.target.querySelectorAll('input[disabled], textarea[disabled]');
-  disabledChild.forEach(element => {
-    elementText+= element.value || "";
-  });
-  
-  elementText = elementText.trim();
+  chrome.storage.local.get(['user'], (result) => {
+    if (result.user && result.user.disableDoubleClick === 1) return;
 
-  // let pageText = document.body.innerText || document.body.textContent || "";
+    let elementText = event.target.value || event.target.innerText || event.target.textContent || "";
+    
+    const disabledChild = event.target.querySelectorAll('input[disabled], textarea[disabled]');
+    disabledChild.forEach(element => {
+      elementText+= element.value || "";
+    });
+    
+    elementText = elementText.trim();
 
-  if (elementText.length > 0) {
-    displayDiscreetly("⏳");
+    if (elementText.length > 0) {
+      displayDiscreetly("⏳");
     chrome.runtime.sendMessage({
       action: "getAnswer",
       question: elementText,
@@ -80,12 +101,19 @@ window.addEventListener('dblclick', (event) => {
       }
     });
   }
+  });
 }, { capture: true });
 
+function clickProxy(element, debugText=""){
+  // logDebug("Clicking on :", element, debugText)
+  element.click()
+}
+
 function clickOnAnswer(correctAnswerText, questionElement) {
+  // logDebug(questionElement)
   if (!correctAnswerText) return false;
   let cleanAnswer = correctAnswerText.trim().toLowerCase();
-
+  // logDebug(cleanAnswer)
   const allElements = Array.from(document.querySelectorAll('*'));
   const elementsData = [];
   
@@ -93,7 +121,8 @@ function clickOnAnswer(correctAnswerText, questionElement) {
     let el = allElements[i];
     let text = el.value || el.innerText || el.textContent || "";
     let cleanText = text.trim().toLowerCase();
-    if (cleanText.length > 0 && cleanText.length < 40) {
+    if (cleanText.length > 0 && cleanText.length < 80) {
+      // logDebug("Element text from initial loop : ", cleanText)
       elementsData.push({ el, cleanText, index: i });
     }
   }
@@ -102,8 +131,10 @@ function clickOnAnswer(correctAnswerText, questionElement) {
 
   // 1. Essai avec logique de proximité (si questionElement est fourni)
   if (questionElement) {
+    // logDebug("questionElement fourni")
     const questionIndex = allElements.indexOf(questionElement);
     if (questionIndex !== -1) {
+      // logDebug("questionIndex", questionIndex)
       const proximalElements = elementsData.filter(item => {
         if (item.index <= questionIndex) return false;
         try {
@@ -116,8 +147,8 @@ function clickOnAnswer(correctAnswerText, questionElement) {
 
       // Passe 1 Proximité : Correspondance exacte
       for (const item of proximalElements) {
-        if (cleanAnswer === item.cleanText) {
-          item.el.click();
+        if (cleanAnswer == item.cleanText) {
+          clickProxy(item.el, "phase 1");
           clickedSomething = true;
         }
       }
@@ -126,7 +157,7 @@ function clickOnAnswer(correctAnswerText, questionElement) {
       // Passe 2 Proximité : Correspondance partielle
       for (const item of proximalElements) {
         if (item.cleanText.includes(cleanAnswer) || (cleanAnswer.includes(item.cleanText) && item.cleanText.length > 1)) {
-          item.el.click();
+          clickProxy(item.el, "phase 2");
           clickedSomething = true;
         }
       }
@@ -136,18 +167,21 @@ function clickOnAnswer(correctAnswerText, questionElement) {
 
   // 2. Fallback (comportement global par défaut)
   // Passe 1 Globale : Correspondance exacte
+  // logDebug("debut phase 1 globale")
   for (const item of elementsData) {
-    if (cleanAnswer === item.cleanText) {
-      item.el.click();
+    // logDebug("item text", item.cleanText)
+    if (cleanAnswer == item.cleanText) {
+      clickProxy(item.el, "phase 1 globale");
       clickedSomething = true;
     }
   }
   if (clickedSomething) return true;
 
+  // logDebug("debut phase 2 globale")
   // Passe 2 Globale : Correspondance partielle
   for (const item of elementsData) {
     if (item.cleanText.includes(cleanAnswer) || (cleanAnswer.includes(item.cleanText) && item.cleanText.length > 1)) {
-      item.el.click();
+      clickProxy(item.el, "phase 2 globale");
       clickedSomething = true;
     }
   }

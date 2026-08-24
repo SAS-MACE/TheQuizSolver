@@ -1,0 +1,46 @@
+{
+  "manifest_version": 3,
+  "name": "__MSG_extName__",
+  "short_name": "__MSG_extShortName__",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "extension@thequizsolver.com",
+      "strict_min_version": "109.0"
+    }
+  },
+  "version": "2.1",
+  "description": "__MSG_extDesc__",
+  "default_locale": "en",
+  "icons": {
+    "16": "images/icon128.png",
+    "48": "images/icon128.png",
+    "128": "images/icon128.png",
+    "256": "images/icon128.png"
+  },
+  "action": {},
+  "permissions": [
+    "bookmarks",
+    "storage",
+    "cookies"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
+      "run_at": "document_start"
+    }
+  ]
+}

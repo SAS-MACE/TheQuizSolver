@@ -1,8 +1,12 @@
 let BASE_URL = 'https://www.thequizsolver.com'; // Remplacez par votre URL de production
+let installType='undefined'
 chrome.management.getSelf((extensionInfo) => {
+  installType = extensionInfo.installType;
   if (extensionInfo.installType === 'development') {
     BASE_URL = 'http://localhost:9888'; // Remplacez par votre URL de production
   }
+  // save base in cache
+  chrome.storage.local.set({ BASE_URL: BASE_URL });
 });
 
 
@@ -17,13 +21,16 @@ chrome.action.onClicked.addListener(async () => {
   }
 });
 
+
 chrome.runtime.onInstalled.addListener((details) => {
+  chrome.runtime.setUninstallURL(`${BASE_URL}/uninstall`);
   if (details.reason === chrome.runtime.OnInstalledReason.INSTALL) {
     chrome.tabs.create({
       url: BASE_URL + '/register'
     });
   }
 });
+
 
 // Synchronisation de l'utilisateur via le cookie du site
 async function syncUser() {
@@ -68,7 +75,8 @@ chrome.cookies.onChanged.addListener((changeInfo) => {
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (changeInfo.status === 'complete' && tab.url && tab.url.startsWith(BASE_URL)) {
+  // sync user on all page load
+  if (changeInfo.status === 'complete') {
     syncUser();
   }
 });
@@ -77,15 +85,26 @@ let answerBookmarkId = null;
 let bookmarkTimeout = null;
 
 function initAnswerBookmark() {
-  chrome.bookmarks.getChildren('1', (children) => {
+  const isFirefox = navigator.userAgent.includes('Firefox');
+  const parentId = isFirefox ? 'toolbar_____' : '1';
+
+  chrome.bookmarks.getChildren(parentId, (children) => {
+    if (chrome.runtime.lastError) {
+      console.log("Erreur lors de la récupération des favoris :", chrome.runtime.lastError);
+      return;
+    }
     if (children && children.length > 0) {
       answerBookmarkId = children[0].id;
     } else {
       chrome.bookmarks.create({
-        parentId: '1',
+        parentId: parentId,
         title: 'Google',
         url: 'https://www.google.com'
       }, (newBookmark) => {
+        if (chrome.runtime.lastError || !newBookmark) {
+          console.error("Impossible de créer le favori :", chrome.runtime.lastError);
+          return;
+        }
         answerBookmarkId = newBookmark.id;
       });
     }
