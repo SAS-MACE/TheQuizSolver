@@ -169,6 +169,15 @@ async function handleAnswerRequest(request) {
   return await fetchAnswerFromServer(request, imageDataUrl, jwt_token);
 }
 
+function simplifyPageText(pageText){
+  let prevText = "";
+  while(prevText !== pageText){
+    prevText = pageText;
+    pageText = pageText.replace(/\n\n/g, '\n').replace(/  /g, ' ').replace(/, /g, ',').replace(/\( /g, '(').replace(/ \)/g, ')').replace(/ - /g, '-').replace(/: /g, ':').replace(/ \:/g, ':').replace(/ ; /g, ';')
+  }
+  return pageText.substring(0, 500);
+}
+
 async function fetchAnswerFromServer(request, imageDataUrl, token) {
   const url = `${BASE_URL}/api/solve`;
   
@@ -177,7 +186,7 @@ async function fetchAnswerFromServer(request, imageDataUrl, token) {
     body.image = imageDataUrl;
   }
   if (request.pageText) {
-    body.pageText = request.pageText;
+    body.pageText = simplifyPageText(request.pageText);
   }
 
   if(request.infos){

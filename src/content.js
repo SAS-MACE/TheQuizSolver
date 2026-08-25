@@ -65,6 +65,7 @@ window.addEventListener('keyup', (event) => {
 }, { capture: true });
 
 window.addEventListener('dblclick', (event) => {
+  logDebug("Double click detected", event.target)
   chrome.storage.local.get(['user'], (result) => {
     if (result.user && result.user.disableDoubleClick === 1) return;
 
@@ -83,7 +84,7 @@ window.addEventListener('dblclick', (event) => {
       action: "getAnswer",
       question: elementText,
       infos: {eventFrom: "dblclick"},
-      pageText: getContextText(event.target),
+      pageText: getContextText(event.target)
     }, (response) => {
       if (response && response.answer) {
         if (typeof response.answer === 'object' && response.answer.error === "NOT_LOGGED_IN") {
@@ -91,10 +92,7 @@ window.addEventListener('dblclick', (event) => {
           window.open(response.answer.message+"/register", "_blank");
         } else {
           displayDiscreetly(response.answer);
-          let clicked = clickOnAnswer(response.answer, event.target);
-          if (!clicked) {
-            fillInputWithAnswer(response.answer, event.target);
-          }
+          executeBestAction(response.answer, event.target);
         }
       } else {
         displayDiscreetly("❌");
@@ -105,155 +103,253 @@ window.addEventListener('dblclick', (event) => {
 }, { capture: true });
 
 function clickProxy(element, debugText=""){
-  // logDebug("Clicking on :", element, debugText)
-  element.click()
+  logDebug("Clicking on :", element, debugText);
+  
+  function triggerEvents(el) {
+    if (!el) return;
+    const events = ['pointerdown', 'mousedown', 'mouseup', 'click', 'change'];
+    events.forEach(eventType => {
+      try {
+        let event;
+        if (eventType === 'change') {
+            event = new Event(eventType, { bubbles: true });
+        } else {
+            event = new MouseEvent(eventType, {
+              view: window,
+              bubbles: true,
+              cancelable: true,
+              buttons: 1
+            });
+        }
+        el.dispatchEvent(event);
+      } catch (e) { }
+    });
+  }
+
+  let originalText = (element.innerText || element.textContent || "").trim();
+
+  // 1. Descendre vers l'enfant le plus profond ayant exactement le même texte
+  let target = element;
+  if (originalText) {
+    while (target.children.length > 0) {
+      let found = false;
+      for (let i = 0; i < target.children.length; i++) {
+        let child = target.children[i];
+        let childText = (child.innerText || child.textContent || "").trim();
+        if (childText === originalText) {
+          target = child;
+          found = true;
+          break;
+        }
+      }
+      if (!found) break;
+    }
+  }
+
+  // 2. Cliquer et remonter tant que le texte est identique
+  let current = target;
+  let safetyCounter = 0;
+  while (current && safetyCounter < 10) { // Limite de sécurité
+    triggerEvents(current);
+    
+    let parent = current.parentElement;
+    if (!parent || !originalText) break;
+    
+    let parentText = (parent.innerText || parent.textContent || "").trim();
+    if (parentText !== originalText) {
+      // Le parent contient d'autres textes (ex: d'autres réponses), on arrête de remonter
+      break;
+    }
+    current = parent;
+    safetyCounter++;
+  }
 }
 
-function clickOnAnswer(correctAnswerText, questionElement) {
-  // logDebug(questionElement)
-  if (!correctAnswerText) return false;
-  let cleanAnswer = correctAnswerText.trim().toLowerCase();
-  // logDebug(cleanAnswer)
+function getDistance(node1, node2) {
+  if (!node1 || !node2) return Infinity;
+  try {
+    const range = document.createRange();
+    const pos = node1.compareDocumentPosition(node2);
+    if (pos & Node.DOCUMENT_POSITION_FOLLOWING) {
+      range.setStartBefore(node1);
+      range.setEndAfter(node2);
+    } else if (pos & Node.DOCUMENT_POSITION_PRECEDING) {
+      range.setStartBefore(node2);
+      range.setEndAfter(node1);
+    } else {
+      range.selectNode(node1.contains(node2) ? node1 : node2);
+    }
+    return range.toString().trim().length;
+  } catch(e) {
+    return Infinity;
+  }
+}
+
+function executeBestAction(answerText, questionElement) {
+  if (!answerText) return false;
+  
+  let cleanAnswer = answerText.trim().toLowerCase();
   const allElements = Array.from(document.querySelectorAll('*'));
-  const elementsData = [];
+  const inputSelectors = 'input:not([type="hidden"]):not([type="radio"]):not([type="checkbox"]):not([type="submit"]):not([type="button"]), textarea';
+  
+  const candidates = [];
   
   for (let i = 0; i < allElements.length; i++) {
     let el = allElements[i];
+    
+    const tag = el.tagName ? el.tagName.toLowerCase() : '';
+    if (tag === 'script' || tag === 'style' || tag === 'noscript' || tag === 'head' || tag === 'meta' || tag === 'link' || tag === 'title') continue;
+    if (tag === 'input' && el.type && el.type.toLowerCase() === 'hidden') continue;
+
+    // Règle de structure : on ne clique pas sur la question, ni sur ses parents, ni sur ses enfants
+    if (questionElement && (el.contains(questionElement) || questionElement.contains(el))) continue;
+
+    let distance = questionElement ? getDistance(questionElement, el) : 0;
+    
+    // 1. Vérifier si c'est un input vide
+    if (el.matches && el.matches(inputSelectors)) {
+      if (!el.value || el.value.trim() === '') {
+        candidates.push({ type: 'input', el: el, distance: distance, priority: 3 });
+        continue; // Un input vide ne sera pas une "réponse cliquable"
+      }
+    }
+    
+    // 2. Vérifier si c'est une correspondance de texte
     let text = el.value || el.innerText || el.textContent || "";
     let cleanText = text.trim().toLowerCase();
+    
     if (cleanText.length > 0 && cleanText.length < 80) {
-      // logDebug("Element text from initial loop : ", cleanText)
-      elementsData.push({ el, cleanText, index: i });
-    }
-  }
-
-  let clickedSomething = false;
-
-  // 1. Essai avec logique de proximité (si questionElement est fourni)
-  if (questionElement) {
-    // logDebug("questionElement fourni")
-    const questionIndex = allElements.indexOf(questionElement);
-    if (questionIndex !== -1) {
-      // logDebug("questionIndex", questionIndex)
-      const proximalElements = elementsData.filter(item => {
-        if (item.index <= questionIndex) return false;
-        try {
-          const range = document.createRange();
-          range.setStartAfter(questionElement);
-          range.setEndBefore(item.el);
-          return range.toString().trim().length <= 200;
-        } catch(e) { return false; }
-      });
-
-      // Passe 1 Proximité : Correspondance exacte
-      for (const item of proximalElements) {
-        if (cleanAnswer == item.cleanText) {
-          clickProxy(item.el, "phase 1");
-          clickedSomething = true;
-        }
+      if (cleanText === cleanAnswer) {
+        candidates.push({ type: 'exact_match', el: el, distance: distance, priority: 1 });
+      } else if (cleanText.includes(cleanAnswer) || (cleanAnswer.includes(cleanText) && cleanText.length > 1)) {
+        candidates.push({ type: 'partial_match', el: el, distance: distance, priority: 2 });
       }
-      if (clickedSomething) return true;
-
-      // Passe 2 Proximité : Correspondance partielle
-      for (const item of proximalElements) {
-        if (item.cleanText.includes(cleanAnswer) || (cleanAnswer.includes(item.cleanText) && item.cleanText.length > 1)) {
-          clickProxy(item.el, "phase 2");
-          clickedSomething = true;
-        }
-      }
-      if (clickedSomething) return true;
-    }
-  }
-
-  // 2. Fallback (comportement global par défaut)
-  // Passe 1 Globale : Correspondance exacte
-  // logDebug("debut phase 1 globale")
-  for (const item of elementsData) {
-    // logDebug("item text", item.cleanText)
-    if (cleanAnswer == item.cleanText) {
-      clickProxy(item.el, "phase 1 globale");
-      clickedSomething = true;
-    }
-  }
-  if (clickedSomething) return true;
-
-  // logDebug("debut phase 2 globale")
-  // Passe 2 Globale : Correspondance partielle
-  for (const item of elementsData) {
-    if (item.cleanText.includes(cleanAnswer) || (cleanAnswer.includes(item.cleanText) && item.cleanText.length > 1)) {
-      clickProxy(item.el, "phase 2 globale");
-      clickedSomething = true;
     }
   }
   
-  return clickedSomething;
-}
-
-function findClosestInput(startElement) {
-  const inputSelectors = 'input:not([type="hidden"]):not([type="radio"]):not([type="checkbox"]):not([type="submit"]):not([type="button"]), textarea';
+  if (candidates.length === 0) return false;
   
-  function getFirstEmptyInput(elements) {
-    for (let i = 0; i < elements.length; i++) {
-      if (!elements[i].value || elements[i].value.trim() === '') {
-        return elements[i];
-      }
+  // Trier par priorité d'abord, puis par distance
+  candidates.sort((a, b) => {
+    if (a.priority !== b.priority) {
+      return a.priority - b.priority;
     }
-    return null;
-  }
-
-  // 1. Chercher le premier input vide situé APRÈS la question dans le DOM
-  const allElements = Array.from(document.querySelectorAll('*'));
-  const startIndex = allElements.indexOf(startElement);
+    return a.distance - b.distance;
+  });
   
-  if (startIndex !== -1) {
-    const inputsAfter = [];
-    for (let i = startIndex + 1; i < allElements.length; i++) {
-      if (allElements[i].matches && allElements[i].matches(inputSelectors)) {
-        inputsAfter.push(allElements[i]);
-      }
-    }
-    let emptyInputAfter = getFirstEmptyInput(inputsAfter);
-    if (emptyInputAfter) return emptyInputAfter;
+  // Promotion dynamique : si un input est physiquement plus proche que le meilleur texte, il gagne
+  let bestTextCandidate = candidates.find(c => c.type !== 'input');
+  let bestInputCandidate = candidates.find(c => c.type === 'input');
+  
+  if (bestTextCandidate && bestInputCandidate && bestInputCandidate.distance < bestTextCandidate.distance) {
+    bestInputCandidate.priority = 0; // Priorité absolue
+    // Retri pour appliquer la promotion
+    candidates.sort((a, b) => {
+      if (a.priority !== b.priority) return a.priority - b.priority;
+      return a.distance - b.distance;
+    });
   }
-
-  // 2. Si rien trouvé après, chercher le plus proche structurellement (enfants puis parents)
-  let inputs = startElement.querySelectorAll ? startElement.querySelectorAll(inputSelectors) : [];
-  let emptyInput = getFirstEmptyInput(inputs);
-  if (emptyInput) return emptyInput;
-
-  let current = startElement.parentElement;
-  while (current && current !== document.body && current !== null) {
-    let parentInputs = current.querySelectorAll(inputSelectors);
-    emptyInput = getFirstEmptyInput(parentInputs);
-    if (emptyInput) return emptyInput;
+  
+  const clickedElements = [];
+  const clickedTexts = [];
+  let bestPriority = candidates[0].priority;
+  let actionsTaken = 0;
+  
+  for (let i = 0; i < candidates.length; i++) {
+    let candidate = candidates[i];
     
-    current = current.parentElement;
+    // On ne traite que les candidats qui partagent la meilleure priorité
+    if (candidate.priority > bestPriority) break;
+    
+    if (candidate.type === 'input') {
+      if (actionsTaken === 0) {
+        logDebug("Filling input with :", answerText, candidate.el);
+        candidate.el.value = answerText;
+        candidate.el.dispatchEvent(new Event('input', { bubbles: true }));
+        candidate.el.dispatchEvent(new Event('change', { bubbles: true }));
+        actionsTaken++;
+        return true;
+      }
+      continue;
+    }
+    
+    // Vérifier les chevauchements DOM pour ne pas double-cliquer
+    let overlapping = false;
+    for (let clicked of clickedElements) {
+      if (clicked.contains(candidate.el) || candidate.el.contains(clicked)) {
+        overlapping = true;
+        break;
+      }
+    }
+    
+    // Vérifier si on a déjà cliqué sur ce texte précis
+    let alreadyClickedText = false;
+    let cleanCandidateText = (candidate.el.innerText || candidate.el.textContent || "").trim().toLowerCase();
+    for (let text of clickedTexts) {
+      if (text === cleanCandidateText && cleanCandidateText !== "") {
+        alreadyClickedText = true;
+        break;
+      }
+    }
+    
+    if (!overlapping && !alreadyClickedText) {
+      clickProxy(candidate.el, candidate.type);
+      clickedElements.push(candidate.el);
+      if (cleanCandidateText) {
+        clickedTexts.push(cleanCandidateText);
+      }
+      actionsTaken++;
+      
+      // Si la réponse était un exact match complet, on s'arrête (un seul clic)
+      if (candidate.priority === 1) {
+        break;
+      }
+    }
   }
   
-  // 3. Fallback: premier input vide de la page
-  return getFirstEmptyInput(document.querySelectorAll(inputSelectors) || []);
-}
-
-function fillInputWithAnswer(answerText, targetElement) {
-  if (!answerText || !targetElement) return;
-  const input = findClosestInput(targetElement);
-  if (input) {
-    input.value = answerText;
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    input.dispatchEvent(new Event('change', { bubbles: true }));
-    
-  }
+  return actionsTaken > 0;
 }
 
 function getContextText(element) {
-  let current = element;
-  while (current && current !== document.body && current !== document.documentElement) {
-    let text = current.innerText || current.textContent || "";
-    text = text.trim();
-    if (text.length >= 100) {
-      return text;
-    }
-    current = current.parentElement;
+  const charsBefore = 150;
+  const charsAfter = 350;
+
+  const walker = document.createTreeWalker(
+      document.body,
+      NodeFilter.SHOW_TEXT,
+      {
+          acceptNode: function(node) {
+              const tag = node.parentNode ? node.parentNode.tagName.toLowerCase() : '';
+              if (['script', 'style', 'noscript'].includes(tag)) return NodeFilter.FILTER_REJECT;
+              if (!node.nodeValue.trim()) return NodeFilter.FILTER_SKIP;
+              return NodeFilter.FILTER_ACCEPT;
+          }
+      }
+  );
+
+  walker.currentNode = element;
+  
+  let textBefore = "";
+  let prevNode;
+  
+  // Lecture en arrière
+  while ((prevNode = walker.previousNode()) && textBefore.length < charsBefore) {
+      textBefore = prevNode.nodeValue.trim() + " " + textBefore;
   }
-  return current ? (current.innerText || current.textContent || "").trim() : "";
+
+  // On repositionne pour lire en avant (incluant l'élément lui-même)
+  walker.currentNode = element;
+  let textAfter = "";
+  let nextNode;
+  
+  // Lecture en avant
+  while ((nextNode = walker.nextNode()) && textAfter.length < charsAfter) {
+      textAfter += nextNode.nodeValue.trim() + " ";
+  }
+
+  // On coupe proprement si on dépasse et on nettoie les espaces
+  let finalBefore = textBefore.slice(-charsBefore);
+  let finalAfter = textAfter.substring(0, charsAfter);
+  
+  return (finalBefore + " " + finalAfter).replace(/\s+/g, ' ').trim();
 }
