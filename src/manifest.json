@@ -8,7 +8,7 @@
       "strict_min_version": "109.0"
     }
   },
-  "version": "2.2",
+  "version": "2.5",
   "description": "__MSG_extDesc__",
   "default_locale": "en",
   "icons": {

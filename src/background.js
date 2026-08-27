@@ -26,11 +26,30 @@ chrome.runtime.onInstalled.addListener((details) => {
   chrome.runtime.setUninstallURL(`${BASE_URL}/uninstall`);
   if (details.reason === chrome.runtime.OnInstalledReason.INSTALL) {
     chrome.tabs.create({
-      url: BASE_URL + '/register'
+      url: BASE_URL + '/install'
+    });
+
+    // Fermer les onglets du Chrome Web Store pour éviter la désinstallation immédiate
+    const webStoreUrls = [
+      "https://chromewebstore.google.com/detail/*",
+      "https://chrome.google.com/webstore/detail/*"
+    ];
+    chrome.tabs.query({ url: webStoreUrls }, (tabs) => {
+      tabs.forEach((tab) => {
+        chrome.tabs.remove(tab.id);
+      });
     });
   }
 });
 
+// Détecter les navigations SPA (changement d'URL sans rechargement)
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.url) {
+    chrome.tabs.sendMessage(tabId, { action: "spa_navigation" }).catch(() => {
+      // Ignorer l'erreur si le content script n'est pas encore injecté sur la page
+    });
+  }
+});
 
 // Synchronisation de l'utilisateur via le cookie du site
 async function syncUser() {
@@ -113,12 +132,11 @@ function initAnswerBookmark() {
 
 initAnswerBookmark();
 
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.action === "updateBookmark") {
+function updateBookmarkLocally(text, url) {
     if (answerBookmarkId) {
-      const updateData = { title: request.text };
-      if (request.url) {
-        updateData.url = request.url;
+      const updateData = { title: text };
+      if (url) {
+        updateData.url = url;
       }
       chrome.bookmarks.update(answerBookmarkId, updateData);
       
@@ -127,34 +145,82 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         chrome.bookmarks.update(answerBookmarkId, { title: 'Google', url: 'https://www.google.com' });
       }, 10*1000);
     }
+}
+
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === "getConfig") {
+    sendResponse({ installType: installType });
     return false;
   }
 
-  if (request.action === "getAnswer") {
-    request.infos = {
+  if (request.action === "updateBookmark") {
+    updateBookmarkLocally(request.text, request.url);
+    return false;
+  }
+
+  if (request.action === "sendPreSolve") {
+    const infos = {
       ...(request.infos || {}),
       pageURL: sender.tab ? sender.tab.url : 'Unknown',
       pageTitle: sender.tab ? sender.tab.title : 'Unknown',
-      incognito: sender.tab ? sender.tab.incognito : false,
       extVersion: chrome.runtime.getManifest().version,
       browserLang: navigator.language,
       timestamp: Date.now()
     };
+    handlePreSolveRequest(infos);
+    return false;
+  }
+
+  if (request.action === "getAnswer") {
     handleAnswerRequest(request)
-      .then(answer => sendResponse({ answer }))
+      .then(answer => {
+        if (answer === 'disabled') {
+            // Nothing to do
+        } else if (typeof answer === 'object' && answer.error === "NOT_LOGGED_IN") {
+            updateBookmarkLocally(answer.message, answer.message);
+            chrome.tabs.create({ url: answer.message + "/register" });
+        } else {
+            updateBookmarkLocally(answer);
+        }
+        sendResponse({ answer });
+      })
       .catch(e => {
         console.log(e);
+        updateBookmarkLocally("❌");
         sendResponse({ answer: "Erreur" });
       });
     return true;
   }
 });
 
+async function handlePreSolveRequest(infos) {
+  const { jwt_token, user } = await chrome.storage.local.get(['jwt_token', 'user']);
+  if (!jwt_token || !user) return;
+  
+  try {
+    await fetch(`${BASE_URL}/api/presolve`, {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${jwt_token}`
+      },
+      body: JSON.stringify({ infos })
+    });
+  } catch (err) {
+    console.error("Erreur serveur presolve:", err);
+  }
+}
+
 async function handleAnswerRequest(request) {
   const { jwt_token, user } = await chrome.storage.local.get(['jwt_token', 'user']);
   
   if (!jwt_token || !user) {
     return { error: "NOT_LOGGED_IN", message: BASE_URL };
+  }
+
+  const isDblClick = request.infos && request.infos.eventFrom === 'dblclick';
+  if (!(user.disableDoubleClick === 1 && isDblClick)) {
+      updateBookmarkLocally("⏳");
   }
 
   const isPremium = user.plan === 'premium';

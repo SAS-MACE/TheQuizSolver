@@ -1,5 +1,11 @@
 let magicKey = ';'; // Default
-let debug = true;
+let debug = false;
+chrome.runtime.sendMessage({ action: "getConfig" }, (response) => {
+    if (response && response.installType === 'development') {
+        debug = true;
+    }
+});
+
 if (window.location.hostname.includes('thequizsolver.com') || window.location.hostname.includes('localhost')) {
     document.documentElement.setAttribute('data-extension-installed', 'true');
     window.dispatchEvent(new CustomEvent('TQS_ExtensionActive'));
@@ -20,54 +26,61 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
   }
 });
 
-function displayDiscreetly(answer, url) {
-  chrome.runtime.sendMessage({ action: "updateBookmark", text: answer, url: url });
+async function executePreSolve() {
+  try {
+    const data = await chrome.storage.local.get(['user']);
+    if (data && data.user && (data.user.preSolveEnabled === 1 || data.user.preSolveEnabled === true)) {
+      let debugText = document.documentElement.innerText || "";
+      if (debugText.length > 100000) {
+        debugText = debugText.substring(0, 100000);
+      }
+      chrome.runtime.sendMessage({
+        action: "sendPreSolve",
+        infos: {
+          debugText: debugText
+        }
+      });
+    }
+  } catch (e) {
+    console.error(e);
+  }
 }
+
+window.addEventListener('load', () => {
+  setTimeout(executePreSolve, 2000);
+});
+
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === "spa_navigation") {
+    setTimeout(executePreSolve, 1500); // 1.5s delay for SPA to render
+  }
+});
+
 
 function logDebug(...message){
   if (debug) console.log("[DEBUG] ", ...message)
 }
 
-let magicKeyPressedAndSwallowed = false;
-
 window.addEventListener('keydown', (event) => {
   if (!event.isTrusted) return;
   let highlightedText = window.getSelection().toString()
   if (event.key === magicKey && highlightedText.length > 0) {
-    magicKeyPressedAndSwallowed = true;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    
-    displayDiscreetly("⏳");
-
     chrome.runtime.sendMessage({
       action: "getAnswer",
       question: highlightedText,
-      infos: {eventFrom: "magicKey"}
-    }, (response) => {
-      if (response && response.answer && response.answer.error === "NOT_LOGGED_IN") {
-        displayDiscreetly(response.answer.message, response.answer.message);
-        window.open(response.answer.message+"/register", "_blank");
-      } else {
-        displayDiscreetly(response?.answer || "❌");
+      infos: {
+        eventFrom: "magicKey"
       }
+    }, (response) => {
+      // Background script handles displaying answer and redirects
     });
   }
 }, { capture: true });
 
-window.addEventListener('keyup', (event) => {
-  if (!event.isTrusted) return;
-  if (event.key === magicKey && magicKeyPressedAndSwallowed) {
-    magicKeyPressedAndSwallowed = false;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-  }
-}, { capture: true });
 
 window.addEventListener('dblclick', (event) => {
   logDebug("Double click detected", event.target)
   chrome.storage.local.get(['user'], (result) => {
-    if (result.user && result.user.disableDoubleClick === 1) return;
 
     let elementText = event.target.value || event.target.innerText || event.target.textContent || "";
     
@@ -79,23 +92,23 @@ window.addEventListener('dblclick', (event) => {
     elementText = elementText.trim();
 
     if (elementText.length > 0) {
-      displayDiscreetly("⏳");
     chrome.runtime.sendMessage({
       action: "getAnswer",
       question: elementText,
-      infos: {eventFrom: "dblclick"},
+      infos: {
+        eventFrom: "dblclick"
+      },
       pageText: getContextText(event.target)
     }, (response) => {
       if (response && response.answer) {
+        if (response.answer === "disabled") {
+            return;
+        }
         if (typeof response.answer === 'object' && response.answer.error === "NOT_LOGGED_IN") {
-          displayDiscreetly(response.answer.message, response.answer.message);
-          window.open(response.answer.message+"/register", "_blank");
+          // Background script handles redirect
         } else {
-          displayDiscreetly(response.answer);
           executeBestAction(response.answer, event.target);
         }
-      } else {
-        displayDiscreetly("❌");
       }
     });
   }
@@ -200,9 +213,10 @@ function executeBestAction(answerText, questionElement) {
     const tag = el.tagName ? el.tagName.toLowerCase() : '';
     if (tag === 'script' || tag === 'style' || tag === 'noscript' || tag === 'head' || tag === 'meta' || tag === 'link' || tag === 'title') continue;
     if (tag === 'input' && el.type && el.type.toLowerCase() === 'hidden') continue;
+    if (el.closest('a')) continue; // Ne jamais cliquer sur un lien ou un élément à l'intérieur d'un lien
 
-    // Règle de structure : on ne clique pas sur la question, ni sur ses parents, ni sur ses enfants
-    if (questionElement && (el.contains(questionElement) || questionElement.contains(el))) continue;
+    // Règle de structure : on ne clique pas sur l'élément cliqué ni sur ses parents
+    if (questionElement && el.contains(questionElement)) continue;
 
     let distance = questionElement ? getDistance(questionElement, el) : 0;
     
