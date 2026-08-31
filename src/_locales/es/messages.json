@@ -1,0 +1,11 @@
+{
+  "extName": {
+    "message": "The Quiz Solver"
+  },
+  "extShortName": {
+    "message": "The Quiz Solver"
+  },
+  "extDesc": {
+    "message": "¡Resuelve cualquier cuestionario con IA! Haz doble clic en una pregunta para obtener la respuesta al instante."
+  }
+}

@@ -178,7 +178,45 @@ function clickProxy(element, debugText=""){
   }
 }
 
-function getDistance(node1, node2) {
+function getPathWithSemanticDistances(node) {
+  let pathMap = new Map();
+  let curr = node;
+  let dist = 0;
+  let prevText = (curr.innerText || curr.textContent || "").trim();
+
+  while (curr) {
+    pathMap.set(curr, dist);
+    let nextParent = curr.parentNode;
+    if (nextParent) {
+      let parentText = (nextParent.innerText || nextParent.textContent || "").trim();
+      if (parentText !== prevText) {
+        dist++;
+        prevText = parentText;
+      }
+    }
+    curr = nextParent;
+  }
+  return pathMap;
+}
+
+function getDomDistance(path1Map, node2) {
+  if (!path1Map || !node2) return Infinity;
+  try {
+    let path2Map = getPathWithSemanticDistances(node2);
+    
+    for (let [node, dist1] of path1Map) {
+      if (path2Map.has(node)) {
+        let dist2 = path2Map.get(node);
+        return dist1 + dist2;
+      }
+    }
+    return Infinity;
+  } catch(e) {
+    return Infinity;
+  }
+}
+
+function getTextDistance(node1, node2) {
   if (!node1 || !node2) return Infinity;
   try {
     const range = document.createRange();
@@ -202,8 +240,9 @@ function executeBestAction(answerText, questionElement) {
   if (!answerText) return false;
   
   let cleanAnswer = answerText.trim().toLowerCase();
+  let superCleanAnswer = cleanAnswer.replace(/\s+/g, '');
   const allElements = Array.from(document.querySelectorAll('*'));
-  const inputSelectors = 'input:not([type="hidden"]):not([type="radio"]):not([type="checkbox"]):not([type="submit"]):not([type="button"]), textarea';
+  const inputSelectors = 'input:not([type="hidden"]):not([type="radio"]):not([type="checkbox"]):not([type="submit"]):not([type="button"]):not([disabled]):not([readonly]), textarea:not([disabled]):not([readonly])';
   
   const candidates = [];
   
@@ -217,13 +256,11 @@ function executeBestAction(answerText, questionElement) {
 
     // Règle de structure : on ne clique pas sur l'élément cliqué ni sur ses parents
     if (questionElement && el.contains(questionElement)) continue;
-
-    let distance = questionElement ? getDistance(questionElement, el) : 0;
     
     // 1. Vérifier si c'est un input vide
     if (el.matches && el.matches(inputSelectors)) {
       if (!el.value || el.value.trim() === '') {
-        candidates.push({ type: 'input', el: el, distance: distance, priority: 3 });
+        candidates.push({ type: 'input', el: el, priority: 3 });
         continue; // Un input vide ne sera pas une "réponse cliquable"
       }
     }
@@ -233,34 +270,46 @@ function executeBestAction(answerText, questionElement) {
     let cleanText = text.trim().toLowerCase();
     
     if (cleanText.length > 0 && cleanText.length < 80) {
-      if (cleanText === cleanAnswer) {
-        candidates.push({ type: 'exact_match', el: el, distance: distance, priority: 1 });
-      } else if (cleanText.includes(cleanAnswer) || (cleanAnswer.includes(cleanText) && cleanText.length > 1)) {
-        candidates.push({ type: 'partial_match', el: el, distance: distance, priority: 2 });
+      let superCleanText = cleanText.replace(/\s+/g, '');
+      if (superCleanText === superCleanAnswer) {
+        candidates.push({ type: 'exact_match', el: el, priority: 1 });
+      } else if (superCleanAnswer.length >= 3 && (superCleanText.includes(superCleanAnswer) || (superCleanAnswer.includes(superCleanText) && superCleanText.length > 1))) {
+        candidates.push({ type: 'partial_match', el: el, priority: 2 });
       }
     }
   }
   
   if (candidates.length === 0) return false;
   
-  // Trier par priorité d'abord, puis par distance
+  // 3. Calculer les distances de façon fainéante (uniquement pour les candidats)
+  let questionPathMap = questionElement ? getPathWithSemanticDistances(questionElement) : new Map();
+  for (let candidate of candidates) {
+    candidate.distance = questionElement ? getDomDistance(questionPathMap, candidate.el) : 0;
+    candidate.textDistance = questionElement ? getTextDistance(questionElement, candidate.el) : 0;
+  }
+  
+  // Trier par priorité d'abord, puis par distance DOM, puis textDistance en cas d'égalité
   candidates.sort((a, b) => {
     if (a.priority !== b.priority) {
       return a.priority - b.priority;
     }
-    return a.distance - b.distance;
+    if (a.distance !== b.distance) {
+      return a.distance - b.distance;
+    }
+    return a.textDistance - b.textDistance;
   });
   
   // Promotion dynamique : si un input est physiquement plus proche que le meilleur texte, il gagne
   let bestTextCandidate = candidates.find(c => c.type !== 'input');
   let bestInputCandidate = candidates.find(c => c.type === 'input');
   
-  if (bestTextCandidate && bestInputCandidate && bestInputCandidate.distance < bestTextCandidate.distance) {
+  if (bestTextCandidate && bestInputCandidate && (bestInputCandidate.distance < bestTextCandidate.distance || (bestInputCandidate.distance === bestTextCandidate.distance && bestInputCandidate.textDistance < bestTextCandidate.textDistance))) {
     bestInputCandidate.priority = 0; // Priorité absolue
     // Retri pour appliquer la promotion
     candidates.sort((a, b) => {
       if (a.priority !== b.priority) return a.priority - b.priority;
-      return a.distance - b.distance;
+      if (a.distance !== b.distance) return a.distance - b.distance;
+      return a.textDistance - b.textDistance;
     });
   }
   
