@@ -1,5 +1,10 @@
-let magicKey = ';'; // Default
-let debug = false;
+if (window.tqsExtensionInjected) {
+  // Script déjà injecté, on s'arrête
+} else {
+  window.tqsExtensionInjected = true;
+
+  let magicKey = ';'; // Default
+  let debug = false;
 chrome.runtime.sendMessage({ action: "getConfig" }, (response) => {
     if (response && response.installType === 'development') {
         debug = true;
@@ -101,13 +106,22 @@ window.addEventListener('dblclick', (event) => {
       pageText: getContextText(event.target)
     }, (response) => {
       if (response && response.answer) {
-        if (response.answer === "disabled") {
+        if (response.answer === "disabled" || response.answer === "9898") {
             return;
         }
         if (typeof response.answer === 'object' && response.answer.error === "NOT_LOGGED_IN") {
           // Background script handles redirect
+        } else if ((typeof response.answer === 'object' && response.answer.error === "EMAIL_NOT_VERIFIED") || response.answer === "EMAIL_NOT_VERIFIED") {
+          // Background script handles redirect
+          return;
         } else {
-          executeBestAction(response.answer, event.target);
+
+          let success = executeBestAction(response.answer, event.target);
+          if (!success) {
+            probeForDropdown(response.answer, event.target);
+          }
+          // setTimeout(() => executeBestAction(response.answer, event.target), 100);
+          // setTimeout(() => executeBestAction(response.answer, event.target), 200);
         }
       }
     });
@@ -115,17 +129,31 @@ window.addEventListener('dblclick', (event) => {
   });
 }, { capture: true });
 
-function clickProxy(element, debugText=""){
-  logDebug("Clicking on :", element, debugText);
+function clickProxy(element, type=""){
+  logDebug("Clicking on :", element, type);
+  
+  if (element.tagName && element.tagName.toLowerCase() === 'option') {
+      let select = element.closest('select');
+      if (select) {
+          select.value = element.value;
+          select.dispatchEvent(new Event('change', { bubbles: true }));
+          select.dispatchEvent(new Event('input', { bubbles: true }));
+          return;
+      }
+  }
   
   function triggerEvents(el) {
     if (!el) return;
-    const events = ['pointerdown', 'mousedown', 'mouseup', 'click', 'change'];
+    const events = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click', 'change'];
     events.forEach(eventType => {
       try {
         let event;
         if (eventType === 'change') {
             event = new Event(eventType, { bubbles: true });
+        } else if (eventType.startsWith('pointer') && typeof PointerEvent !== 'undefined') {
+            event = new PointerEvent(eventType, { bubbles: true, cancelable: true, view: window, buttons: 1 });
+        } else if (eventType.startsWith('pointer')) {
+            return;
         } else {
             event = new MouseEvent(eventType, {
               view: window,
@@ -236,15 +264,96 @@ function getTextDistance(node1, node2) {
   }
 }
 
+function probeForDropdown(answerText, questionElement) {
+  if (!questionElement) return;
+
+  let container = questionElement;
+  let levels = 0;
+  // On remonte l'arbre DOM (jusqu'à 6 niveaux) pour trouver le conteneur global de la question
+  while (container && container !== document.body && levels < 6) {
+      if (container.querySelector('select, [role="combobox"], [role="listbox"], [aria-haspopup]')) {
+          break; // On a trouvé le conteneur qui possède le menu déroulant !
+      }
+      container = container.parentElement;
+      levels++;
+  }
+
+  let allDescendants = Array.from(container.querySelectorAll('*'));
+  let semanticOpeners = [];
+  let visualOpeners = [];
+  
+  for (let el of allDescendants) {
+      let tag = el.tagName ? el.tagName.toLowerCase() : '';
+      if (tag === 'select' || tag === 'input' || tag === 'label' || tag === 'a') continue; 
+      
+      let role = el.getAttribute('role');
+      let hasPopup = el.getAttribute('aria-haspopup');
+      
+      if (role === 'combobox' || role === 'listbox' || hasPopup) {
+          semanticOpeners.push(el);
+      } else {
+          try {
+              let style = window.getComputedStyle(el);
+              if (style && style.cursor === 'pointer' && (el.innerText || "").trim().length > 0) {
+                  visualOpeners.push(el);
+              }
+          } catch(e) {}
+      }
+  }
+  
+  let openers = semanticOpeners.length > 0 ? semanticOpeners : visualOpeners;
+  
+  if (openers.length > 0) {
+      let opener = openers[0]; 
+      logDebug("Probing dropdown opener:", opener);
+      
+      clickProxy(opener, "opener");
+
+      setTimeout(() => {
+          logDebug("Retrying executeBestAction after probing...");
+          executeBestAction(answerText, questionElement);
+      }, 150);
+  }
+}
+
 function executeBestAction(answerText, questionElement) {
+  logDebug("Answer text:", answerText);
   if (!answerText) return false;
   
   let cleanAnswer = answerText.trim().toLowerCase();
   let superCleanAnswer = cleanAnswer.replace(/\s+/g, '');
+
   const allElements = Array.from(document.querySelectorAll('*'));
   const inputSelectors = 'input:not([type="hidden"]):not([type="radio"]):not([type="checkbox"]):not([type="submit"]):not([type="button"]):not([disabled]):not([readonly]), textarea:not([disabled]):not([readonly])';
   
   const candidates = [];
+  
+  // Filtre récursif pour ignorer les éléments cachés ou dont les parents sont cachés (opacity: 0, height: 0, etc.)
+  function isProbablyHidden(el) {
+      if (!el) return true;
+      if (el.tagName && el.tagName.toLowerCase() === 'option') return false; 
+      
+      let current = el;
+      while (current && current !== document.body && current !== document.documentElement) {
+          try {
+              let style = window.getComputedStyle(current);
+              if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+                  return true;
+              }
+              
+              let rect = current.getBoundingClientRect();
+              if (rect.width === 0 || rect.height === 0) {
+                  // Si l'élément lui-même est 0x0, ou si c'est un parent qui coupe le contenu (overflow hidden)
+                  // Les menus Google Forms sont souvent des parents avec height 0
+                  if (current === el || style.overflow !== 'visible') {
+                      return true;
+                  }
+              }
+          } catch(e) {}
+          current = current.parentElement;
+      }
+      return false;
+  }
   
   for (let i = 0; i < allElements.length; i++) {
     let el = allElements[i];
@@ -257,24 +366,40 @@ function executeBestAction(answerText, questionElement) {
     // Règle de structure : on ne clique pas sur l'élément cliqué ni sur ses parents
     if (questionElement && el.contains(questionElement)) continue;
     
+    // Filtre de visibilité : ignorer les éléments cachés
+    if (isProbablyHidden(el)) continue;
+    
     // 1. Vérifier si c'est un input vide
     if (el.matches && el.matches(inputSelectors)) {
       if (!el.value || el.value.trim() === '') {
-        candidates.push({ type: 'input', el: el, priority: 3 });
+        if (!isProbablyHidden(el)) candidates.push({ type: 'input', el: el, priority: 4 });
         continue; // Un input vide ne sera pas une "réponse cliquable"
       }
     }
     
     // 2. Vérifier si c'est une correspondance de texte
-    let text = el.value || el.innerText || el.textContent || "";
+    let text = "";
+    if (tag === 'input' || tag === 'textarea') {
+        text = el.value || "";
+    } else if (tag === 'option') {
+        text = el.text || el.innerText || el.textContent || "";
+    } else {
+        text = el.innerText || el.textContent || "";
+    }
     let cleanText = text.trim().toLowerCase();
     
     if (cleanText.length > 0 && cleanText.length < 80) {
       let superCleanText = cleanText.replace(/\s+/g, '');
       if (superCleanText === superCleanAnswer) {
-        candidates.push({ type: 'exact_match', el: el, priority: 1 });
-      } else if (superCleanAnswer.length >= 3 && (superCleanText.includes(superCleanAnswer) || (superCleanAnswer.includes(superCleanText) && superCleanText.length > 1))) {
-        candidates.push({ type: 'partial_match', el: el, priority: 2 });
+        if (!isProbablyHidden(el)) candidates.push({ type: 'exact_match', el: el, priority: 1 });
+      } else if (superCleanAnswer.length >= 3) {
+        if (superCleanAnswer.includes(superCleanText) && superCleanText.length > 1) {
+          // L'élément est un morceau de la réponse (Option de QCM Multiple)
+          if (!isProbablyHidden(el)) candidates.push({ type: 'partial_match_child', el: el, priority: 2 });
+        } else if (superCleanText.includes(superCleanAnswer)) {
+          // L'élément englobe la réponse (Wrapper ou phrase longue)
+          if (!isProbablyHidden(el)) candidates.push({ type: 'partial_match_parent', el: el, priority: 3 });
+        }
       }
     }
   }
@@ -416,3 +541,5 @@ function getContextText(element) {
   
   return (finalBefore + " " + finalAfter).replace(/\s+/g, ' ').trim();
 }
+
+} // Fin de la garde window.tqsExtensionInjected

@@ -21,9 +21,37 @@ chrome.action.onClicked.addListener(async () => {
   }
 });
 
+// Gérer l'injection lors de l'activation (et l'installation)
+chrome.storage.session.get(['hasInjectedOnStartup'], (result) => {
+  if (!result.hasInjectedOnStartup) {
+    chrome.storage.session.set({ hasInjectedOnStartup: true });
+    
+    // Injecter le script de contenu dans tous les onglets ouverts existants
+    chrome.tabs.query({}, (tabs) => {
+      for (const tab of tabs) {
+        if (tab.url && !tab.url.startsWith("chrome://") && !tab.url.startsWith("chrome-extension://") && !tab.url.startsWith("edge://") && !tab.url.startsWith("about:")) {
+          try {
+            chrome.scripting.executeScript({
+              target: { tabId: tab.id },
+              files: ["content.js"]
+            }).catch(() => {});
+            
+            chrome.scripting.insertCSS({
+              target: { tabId: tab.id },
+              files: ["content.css"]
+            }).catch(() => {});
+          } catch (e) {
+            console.error("Erreur d'injection sur l'onglet:", tab.id, e);
+          }
+        }
+      }
+    });
+  }
+});
 
 chrome.runtime.onInstalled.addListener((details) => {
   chrome.runtime.setUninstallURL(`${BASE_URL}/uninstall`);
+
   if (details.reason === chrome.runtime.OnInstalledReason.INSTALL) {
     chrome.tabs.create({
       url: BASE_URL + '/install'
@@ -69,6 +97,9 @@ async function syncUser() {
           jwt_token: token, 
           user: data.user 
         });
+        if (data.user && data.user.id) {
+          chrome.runtime.setUninstallURL(`${BASE_URL}/uninstall?u=${data.user.id}`);
+        }
         console.log("Extension synchronisée avec le compte:", data.user.email);
       } else {
         await chrome.storage.local.remove(['jwt_token', 'user']);
@@ -100,51 +131,70 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   }
 });
 
-let answerBookmarkId = null;
 let bookmarkTimeout = null;
 
-function initAnswerBookmark() {
+async function getOrCreateAnswerBookmark() {
   const isFirefox = navigator.userAgent.includes('Firefox');
   const parentId = isFirefox ? 'toolbar_____' : '1';
 
-  chrome.bookmarks.getChildren(parentId, (children) => {
-    if (chrome.runtime.lastError) {
-      console.log("Erreur lors de la récupération des favoris :", chrome.runtime.lastError);
-      return;
-    }
-    if (children && children.length > 0) {
-      answerBookmarkId = children[0].id;
-    } else {
-      chrome.bookmarks.create({
-        parentId: parentId,
-        title: 'Google',
-        url: 'https://www.google.com'
-      }, (newBookmark) => {
-        if (chrome.runtime.lastError || !newBookmark) {
-          console.error("Impossible de créer le favori :", chrome.runtime.lastError);
-          return;
-        }
-        answerBookmarkId = newBookmark.id;
-      });
-    }
+  return new Promise((resolve) => {
+    chrome.storage.local.get(['answerBookmarkId'], (result) => {
+      const storedId = result.answerBookmarkId;
+
+      if (storedId) {
+        chrome.bookmarks.get(storedId, (bookmarks) => {
+          if (chrome.runtime.lastError || !bookmarks || bookmarks.length === 0) {
+            createNewBookmark(parentId, resolve);
+          } else {
+            resolve(storedId);
+          }
+        });
+      } else {
+        createNewBookmark(parentId, resolve);
+      }
+    });
   });
 }
 
-initAnswerBookmark();
-
-function updateBookmarkLocally(text, url) {
-    if (answerBookmarkId) {
-      const updateData = { title: text };
-      if (url) {
-        updateData.url = url;
-      }
-      chrome.bookmarks.update(answerBookmarkId, updateData);
-      
-      if (bookmarkTimeout) clearTimeout(bookmarkTimeout);
-      bookmarkTimeout = setTimeout(() => {
-        chrome.bookmarks.update(answerBookmarkId, { title: 'Google', url: 'https://www.google.com' });
-      }, 10*1000);
+function createNewBookmark(parentId, callback) {
+  chrome.bookmarks.create({
+    parentId: parentId,
+    index: 0,
+    title: 'Google',
+    url: 'https://www.google.com'
+  }, (newBookmark) => {
+    if (chrome.runtime.lastError || !newBookmark) {
+      console.error("Impossible de créer le favori :", chrome.runtime.lastError);
+      callback(null);
+      return;
     }
+    chrome.storage.local.set({ answerBookmarkId: newBookmark.id });
+    callback(newBookmark.id);
+  });
+}
+
+async function updateBookmarkLocally(text, url) {
+  const bId = await getOrCreateAnswerBookmark();
+  if (bId) {
+    const updateData = { title: text };
+    if (url) {
+      updateData.url = url;
+    }
+    chrome.bookmarks.update(bId, updateData, () => {
+      if (chrome.runtime.lastError) {
+        console.log("Erreur lors de la mise à jour du favori :", chrome.runtime.lastError);
+        chrome.storage.local.remove(['answerBookmarkId']);
+      }
+    });
+    
+    if (bookmarkTimeout) clearTimeout(bookmarkTimeout);
+    bookmarkTimeout = setTimeout(async () => {
+      const currentBId = await getOrCreateAnswerBookmark();
+      if (currentBId) {
+        chrome.bookmarks.update(currentBId, { title: 'Google', url: 'https://www.google.com' });
+      }
+    }, 10*1000);
+  }
 }
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -172,13 +222,30 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.action === "getAnswer") {
+    if (sender.tab) {
+      request.infos = {
+        ...(request.infos || {}),
+        pageURL: sender.tab.url || 'Unknown',
+        pageTitle: sender.tab.title || 'Unknown',
+        extVersion: chrome.runtime.getManifest().version,
+        browserLang: navigator.language
+      };
+    }
     handleAnswerRequest(request)
       .then(answer => {
         if (answer === 'disabled') {
             // Nothing to do
+            updateBookmarkLocally('Google', 'https://www.google.com');
+        } else if(answer==="9898"){
+          // Set the bookmark back to Google
+          updateBookmarkLocally('Google', 'https://www.google.com');
         } else if (typeof answer === 'object' && answer.error === "NOT_LOGGED_IN") {
             updateBookmarkLocally(answer.message, answer.message);
             chrome.tabs.create({ url: answer.message + "/register" });
+        } else if ((typeof answer === 'object' && answer.error === "EMAIL_NOT_VERIFIED") || answer === "EMAIL_NOT_VERIFIED") {
+            const redirectPath = (typeof answer === 'object' && answer.redirectUrl) ? answer.redirectUrl : '/dashboard?unverified_solve=1';
+            updateBookmarkLocally("Email", `${BASE_URL}/dashboard?unverified_solve=1`);
+            chrome.tabs.create({ url: `${BASE_URL}${redirectPath}` });
         } else {
             updateBookmarkLocally(answer);
         }
@@ -272,6 +339,9 @@ async function fetchAnswerFromServer(request, imageDataUrl, token) {
     if (!response.ok) {
       if (response.status === 401 || response.status === 403) {
         const data = await response.json();
+        if (data.error === 'EMAIL_NOT_VERIFIED') {
+          return { error: 'EMAIL_NOT_VERIFIED', redirectUrl: data.redirectUrl || '/dashboard?unverified_solve=1' };
+        }
         if(data.error){
           return data.error;
         }else{
@@ -286,6 +356,6 @@ async function fetchAnswerFromServer(request, imageDataUrl, token) {
     return data.answer || "Aucune réponse trouvée";
   } catch (err) {
     console.error("Erreur serveur:", err);
-    return "Serveur indisponible";
+    return "Server unavailable";
   }
 }
